@@ -29,9 +29,10 @@ import (
 )
 
 var (
-	n       = flag.Int("n", 100, "Number of screenshots")
-	dirtmpl = flag.String("d", "%n", "Output directory template (%n will be replaced with the video file name without extension)")
-	fntmpl  = flag.String("f", "shot%03d.jpg", "Screenshot file name template")
+	n         = flag.Int("n", 100, "Number of screenshots")
+	dirtmpl   = flag.String("d", "%n", "Output directory template (%n will be replaced with the video file name without extension)")
+	fntmpl    = flag.String("f", "shot%03d.jpg", "Screenshot file name template")
+	keepGoing = flag.Bool("keep-going", false, "Continue processing after an error")
 )
 
 var (
@@ -69,6 +70,7 @@ func main() {
 		os.Exit(1)
 	}
 
+L:
 	for _, filename := range flag.Args() {
 		fmt.Println(filename)
 
@@ -77,6 +79,9 @@ func main() {
 		dname, err := mkdir(dname)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Can't create directory: %v\n", err)
+			if *keepGoing {
+				continue
+			}
 			os.Exit(1)
 		}
 
@@ -87,6 +92,9 @@ func main() {
 		if match == nil {
 			fmt.Fprintf(os.Stderr, "Can't get movie duration: %v:\nffmpeg's output:\n", err)
 			fmt.Fprint(os.Stderr, string(out))
+			if *keepGoing {
+				continue
+			}
 			os.Exit(1)
 		}
 
@@ -108,6 +116,9 @@ func main() {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Can't get frame: %v\nffmpeg's output:\n", err)
 				fmt.Fprint(os.Stderr, string(out))
+				if *keepGoing {
+					continue L
+				}
 				os.Exit(1)
 			}
 			d += inc
