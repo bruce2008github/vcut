@@ -16,16 +16,16 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cheggaaa/pb"
+
+	"github.com/opennota/screengen"
 )
 
 var (
@@ -34,15 +34,6 @@ var (
 	fntmpl    = flag.String("f", "shot%03d.jpg", "Screenshot file name template")
 	keepGoing = flag.Bool("keep-going", false, "Continue processing after an error")
 )
-
-var (
-	rDuration = regexp.MustCompile(`Duration: (\d\d):(\d\d):(\d\d)`)
-)
-
-func atoi(s string) int {
-	i, _ := strconv.Atoi(s)
-	return i
-}
 
 func mkdir(name string) (string, error) {
 	base := name
@@ -63,6 +54,79 @@ func expand(tmpl, filename string) string {
 	return strings.Replace(tmpl, "%n", name, -1)
 }
 
+// writeImage writes image img to the file fn.
+func writeImage(img image.Image, fn string) {
+	f, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Can't create file: %v\n", err)
+		if *keepGoing {
+			return
+		}
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	err = jpeg.Encode(f, img, &jpeg.Options{Quality: 85})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "JPEG encoding error: %v\n", err)
+		if *keepGoing {
+			return
+		}
+		os.Exit(1)
+	}
+}
+
+// GenerateScreenshots generates screenshots from the video file fn.
+func GenerateScreenshots(fn string) {
+	fmt.Println(fn)
+
+	// Create a directory to store screenshots to.
+
+	dname := expand(*dirtmpl, fn)
+	dname, err := mkdir(dname)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Can't create directory: %v\n", err)
+		if *keepGoing {
+			return
+		}
+		os.Exit(1)
+	}
+
+	// Generate screenshots.
+
+	gen, err := screengen.NewGenerator(fn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading video file: %v\n", err)
+		if *keepGoing {
+			return
+		}
+		os.Exit(1)
+	}
+	defer gen.Close()
+
+	inc := gen.Duration / int64(*n)
+
+	bar := pb.StartNew(*n)
+	var d int64
+	for i := 0; i < *n; i++ {
+		img, err := gen.Image(d)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Can't generate screenshot: %v\n", err)
+			if *keepGoing {
+				continue
+			}
+			os.Exit(1)
+		}
+
+		fn := filepath.Join(dname, fmt.Sprintf(*fntmpl, i))
+		writeImage(img, fn)
+
+		d += inc
+		bar.Increment()
+	}
+	bar.Finish()
+}
+
 func main() {
 	flag.Parse()
 	if len(flag.Args()) == 0 {
@@ -70,60 +134,7 @@ func main() {
 		os.Exit(1)
 	}
 
-L:
 	for _, filename := range flag.Args() {
-		fmt.Println(filename)
-
-		// Create a directory to store screenshots to.
-		dname := expand(*dirtmpl, filename)
-		dname, err := mkdir(dname)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Can't create directory: %v\n", err)
-			if *keepGoing {
-				continue
-			}
-			os.Exit(1)
-		}
-
-		// Get movie duration.
-		cmd := exec.Command("ffmpeg", "-i", filename)
-		out, err := cmd.CombinedOutput()
-		match := rDuration.FindStringSubmatch(string(out))
-		if match == nil {
-			fmt.Fprintf(os.Stderr, "Can't get movie duration: %v:\nffmpeg's output:\n", err)
-			fmt.Fprint(os.Stderr, string(out))
-			if *keepGoing {
-				continue
-			}
-			os.Exit(1)
-		}
-
-		h := atoi(match[1])
-		m := atoi(match[2])
-		s := atoi(match[3])
-		d := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second
-		inc := d / time.Duration(*n)
-
-		// Make screenshots.
-		bar := pb.StartNew(*n)
-		d = 0
-		for i := 0; i < *n; i++ {
-			fname := fmt.Sprintf(*fntmpl, i)
-			cmd := exec.Command("ffmpeg", "-ss", fmt.Sprintf("%02d:%02d:%02d", int(d.Hours()),
-				int(d.Minutes())%60, int(d.Seconds())%60), "-i", filename, "-f",
-				"image2", "-vframes", "1", filepath.Join(dname, fname))
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Can't get frame: %v\nffmpeg's output:\n", err)
-				fmt.Fprint(os.Stderr, string(out))
-				if *keepGoing {
-					continue L
-				}
-				os.Exit(1)
-			}
-			d += inc
-			bar.Increment()
-		}
-		bar.Finish()
+		GenerateScreenshots(filename)
 	}
 }
